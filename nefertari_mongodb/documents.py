@@ -527,24 +527,35 @@ class BaseMixin(object):
         is_dict = isinstance(type(self)._fields[attr], mongo.DictField)
         is_list = isinstance(type(self)._fields[attr], mongo.ListField)
 
+        if is_list:
+            is_list_of_dicts=isinstance(type(self)._fields[attr].item_type, type(mongo.DictField))
         def split_keys(keys):
             neg_keys = []
             pos_keys = []
-
+            self_keys = []
+            if is_list_of_dicts:
+                self_keys= getattr(self,attr)
             for key in keys:
+                #edited to support dicts in a array
                 if isinstance(key,dict):
-                   pos_keys.append(key)
-                   continue
+                    if key in getattr(self,attr):
+                        self_keys.remove(key)
+                    pos_keys.append(key)
+                    continue
                 if key.startswith('__'):
                     continue
                 if key.startswith('-'):
                     neg_keys.append(key[1:])
                 else:
                     pos_keys.append(key.strip())
+            if self_keys:
+                neg_keys.extend(self_keys)
             return pos_keys, neg_keys
 
-        def update_dict_params(update_params,final_value):
 
+        def update_dict(update_params):
+            final_value = getattr(self, attr, {}) or {}
+            final_value = final_value.copy()
             if update_params is None or update_params == '':
                 if not final_value:
                     return
@@ -559,12 +570,7 @@ class BaseMixin(object):
             # Set positive keys
             for key in positive:
                 final_value[str(key)] = update_params[key]
-            return final_value
 
-        def update_dict(update_params):
-            final_value = getattr(self, attr, {}) or {}
-            final_value = final_value.copy()
-            final_value=update_dict_params(update_params,final_value)
             setattr(self, attr, final_value)
             if save:
                 self.save(request)
@@ -580,9 +586,6 @@ class BaseMixin(object):
                 keys = list(update_params.keys())
             else:
                 keys = update_params
-            for idx,key in enumerate(keys):
-                if isinstance(key,dict):
-                    keys[idx] = update_dict_params(update_params=key,final_value=getattr(self,attr)[idx])
 
             positive, negative = split_keys(keys)
 
@@ -595,7 +598,10 @@ class BaseMixin(object):
                 final_value += positive
 
             if negative:
-                final_value = list(set(final_value) - set(negative))
+                if is_list_of_dicts:
+                     [final_value.remove(i) for i in final_value if i in negative]
+                else:
+                    final_value = list(set(final_value) - set(negative))
 
             setattr(self, attr, final_value)
             if save:
