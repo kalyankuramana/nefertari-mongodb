@@ -74,7 +74,7 @@ TYPES_MAP = {
 
     BooleanField: {'type': 'boolean'},
     BinaryField: {'type': 'object'},
-    DictField: {'type': 'object', 'enabled': False},
+    DictField: {'type': 'object', 'enabled': True},
 
     DecimalField: {'type': 'double'},
     FloatField: {'type': 'double'},
@@ -461,6 +461,7 @@ class BaseMixin(object):
 
     def to_dict(self, **kwargs):
         _depth = kwargs.get('_depth')
+        _negative_items=kwargs.get('negative_items',[])
         if _depth is None:
             _depth = self._nesting_depth
         depth_reached = _depth is not None and _depth <= 0
@@ -468,6 +469,9 @@ class BaseMixin(object):
         _data = dictset()
         for field, field_type in self._fields.items():
             # Ignore ForeignKeyField fields
+            if _negative_items:
+                if field in _negative_items:
+                    continue
             if isinstance(field_type, ForeignKeyField):
                 continue
             value = getattr(self, field, None)
@@ -526,19 +530,32 @@ class BaseMixin(object):
                          request=None):
         is_dict = isinstance(type(self)._fields[attr], mongo.DictField)
         is_list = isinstance(type(self)._fields[attr], mongo.ListField)
-
+        is_list_of_dicts = False
+        if is_list:
+            is_list_of_dicts=isinstance(type(self)._fields[attr].item_type, type(mongo.DictField))
         def split_keys(keys):
             neg_keys = []
             pos_keys = []
-
+            self_keys = []
+            if is_list_of_dicts:
+                self_keys= getattr(self,attr)
             for key in keys:
+                #edited to support dicts in a array
+                if isinstance(key,dict):
+                    if key in getattr(self,attr):
+                        self_keys.remove(key)
+                    pos_keys.append(key)
+                    continue
                 if key.startswith('__'):
                     continue
                 if key.startswith('-'):
                     neg_keys.append(key[1:])
                 else:
                     pos_keys.append(key.strip())
+            if self_keys:
+                neg_keys.extend(self_keys)
             return pos_keys, neg_keys
+
 
         def update_dict(update_params):
             final_value = getattr(self, attr, {}) or {}
@@ -576,8 +593,6 @@ class BaseMixin(object):
 
             positive, negative = split_keys(keys)
 
-            if not (positive + negative):
-                raise JHTTPBadRequest('Missing params')
 
             if positive:
                 if unique:
@@ -585,7 +600,10 @@ class BaseMixin(object):
                 final_value += positive
 
             if negative:
-                final_value = list(set(final_value) - set(negative))
+                if is_list_of_dicts:
+                     [final_value.remove(i) for i in final_value if i in negative]
+                else:
+                    final_value = list(set(final_value) - set(negative))
 
             setattr(self, attr, final_value)
             if save:
@@ -596,6 +614,8 @@ class BaseMixin(object):
 
         elif is_list:
             update_list(params)
+
+
 
     @classmethod
     def expand_with(cls, with_cls, join_on=None, attr_name=None, params={},

@@ -43,8 +43,16 @@ def on_bulk_update(model_cls, objects, request):
     # Reindex relationships
     es.bulk_index_relations(objects, request=request, nested_only=True)
 
+def on_post_bulk_insert(sender,documents,**kw):
+    if not documents:
+        return
+    from nefertari.elasticsearch import ES
+    es = ES(source=documents[0].__class__.__name__)
+    docs = to_dicts(documents)
+    es.index(docs)
 
 def setup_es_signals_for(source_cls):
     signals.post_save.connect(on_post_save, sender=source_cls)
     signals.post_delete.connect(on_post_delete, sender=source_cls)
+    signals.post_bulk_insert.connect(on_post_bulk_insert,sender=source_cls)
     log.info('setup_es_signals_for: %r' % source_cls)
